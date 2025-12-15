@@ -1,0 +1,80 @@
+{
+  "cards": [
+    {
+      "id": "bb84",
+      "cardNumber": "4169 7388 7314 9631",
+      "amount": 465.01,
+      "limits": [
+        {
+          "month": "2025-12",
+          "amount": 110
+        }
+      ]
+    }
+  ],
+  "transactions": [
+    {
+      "id": "736d",
+      "cardId": "bb84",
+      "title": "Mehdi Umudov",
+      "type": "revenue",
+      "category": "Transfers",
+      "amount": 100,
+      "date": "2025-12-15T14:05:00.000Z"
+    },
+    {
+      "id": "9617",
+      "cardId": "bb84",
+      "title": "Vəfa Manafova",
+      "type": "revenue",
+      "category": "Transfers",
+      "amount": 80,
+      "date": "2025-12-12T14:06:00.000Z"
+    },
+    {
+      "id": "3f56",
+      "cardId": "bb84",
+      "title": "Ev Kirayesi",
+      "type": "cost",
+      "category": "Transfers",
+      "amount": 80,
+      "date": "2025-12-13T14:07:00.000Z"
+    },
+    {
+      "id": "fbab",
+      "cardId": "bb84",
+      "title": "Azparking",
+      "type": "cost",
+      "category": "Parking",
+      "amount": 4.9,
+      "date": "2025-12-12T16:30:00.000Z"
+    },
+    {
+      "id": "0d72",
+      "cardId": "bb84",
+      "title": "Maaş",
+      "type": "revenue",
+      "category": "Salary",
+      "amount": 604,
+      "date": "2025-12-28T14:13:00.000Z"
+    },
+    {
+      "id": "586f",
+      "cardId": "bb84",
+      "title": "Stipend",
+      "type": "revenue",
+      "category": "Salary",
+      "amount": 215,
+      "date": "2025-12-28T14:14:00.000Z"
+    },
+    {
+      "id": "cb8b",
+      "cardId": "bb84",
+      "title": "Kontakt + Kapital",
+      "type": "cost",
+      "category": "Kredit",
+      "amount": 250,
+      "date": "2025-12-28T14:17:00.000Z"
+    }
+  ]
+}

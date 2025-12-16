@@ -91,6 +91,74 @@ export default function App() {
     loadCards();
   }, [currentUser]);
 
+  // Process scheduled transactions that have passed their scheduled time
+  const processScheduledTransactions = async () => {
+    const userId = localStorage.getItem("userId");
+    if (!userId || !cards.length) return;
+
+    try {
+      // Get all transactions for all user cards
+      const txRef = collection(db, "transactions");
+      const allTransactionsSnapshot = await getDocs(txRef);
+      const allTransactions = allTransactionsSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      // Process each card
+      for (const card of cards) {
+        // Get all transactions for this card
+        const cardTransactions = allTransactions.filter((tx) => tx.cardId === card.id);
+        
+        // Find transactions that are scheduled but not yet affected
+        // Check if transaction date has passed and it's scheduled but not affected
+        const now = new Date();
+        const transactionsToProcess = cardTransactions.filter((tx) => {
+          const txDate = new Date(tx.date);
+          const isPast = txDate <= now;
+          return tx.scheduled === true && tx.isAffect === false && isPast;
+        });
+
+        if (transactionsToProcess.length === 0) continue;
+
+        // Process each transaction that needs to be applied
+        for (const tx of transactionsToProcess) {
+          // Update the transaction to mark it as affected
+          await updateDoc(doc(db, "transactions", tx.id), {
+            isAffect: true,
+          });
+
+          // Update the card balance
+          const cardToUpdate = cards.find((c) => c.id === tx.cardId);
+          if (cardToUpdate) {
+            const updatedAmount = tx.type === "cost" 
+              ? cardToUpdate.amount - tx.amount 
+              : cardToUpdate.amount + tx.amount;
+            
+            await updateDoc(doc(db, "cards", cardToUpdate.id), { 
+              current_amount: updatedAmount 
+            });
+            
+            setCards((prev) => 
+              prev.map((c) => (c.id === cardToUpdate.id ? { ...c, amount: updatedAmount } : c))
+            );
+          }
+        }
+
+        // Update local transactions state if this is the selected card
+        if (card.id === selectedCardId) {
+          const updatedTransactions = transactions.map((t) => {
+            const txToUpdate = transactionsToProcess.find((ptx) => ptx.id === t.id);
+            if (txToUpdate) {
+              return { ...t, isAffect: true };
+            }
+            return t;
+          });
+          setTransactions(updatedTransactions);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to process scheduled transactions", err);
+    }
+  };
+
   // Load transactions for the selected card from Firestore
   useEffect(() => {
     const loadTransactions = async () => {
@@ -104,12 +172,26 @@ export default function App() {
         const snapshot = await getDocs(q);
         const fetched = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
         setTransactions(fetched);
+        
+        // Process scheduled transactions after loading
+        await processScheduledTransactions();
       } catch (err) {
         console.error("Failed to load transactions", err);
       }
     };
     loadTransactions();
   }, [selectedCardId]);
+
+  // Periodic check for scheduled transactions (every 60 seconds)
+  useEffect(() => {
+    if (cards.length === 0) return;
+    
+    const interval = setInterval(() => {
+      processScheduledTransactions();
+    }, 60000); // Check every 60 seconds
+
+    return () => clearInterval(interval);
+  }, [cards.length]);
 
   const addCard = async (card) => {
     try {
@@ -147,7 +229,12 @@ export default function App() {
 
   const addTransaction = async (tx) => {
     const txDate = new Date(tx.date);
-    const isFutureTransaction = txDate > new Date();
+    const now = new Date();
+    const isFutureTransaction = txDate > now;
+    
+    // Set scheduled and isAffect properties
+    const scheduled = isFutureTransaction;
+    const isAffect = !isFutureTransaction; // If not scheduled, it affects balance immediately
 
     // Check limit if it's a cost transaction (only for current transactions)
     if (tx.type === "cost" && !isFutureTransaction) {
@@ -157,11 +244,11 @@ export default function App() {
         const limit = card.limits.find((l) => l.month === monthKey);
 
         if (limit) {
-          // Calculate current month spending (only current transactions, not scheduled)
+          // Calculate current month spending (only transactions that affect balance)
           const currentMonthSpending = transactions
             .filter((t) => {
               if (t.cardId !== tx.cardId || t.type !== "cost") return false;
-              if (isScheduled(t)) return false; // Exclude scheduled transactions
+              if (!t.isAffect) return false; // Exclude transactions that don't affect balance
               const tDate = new Date(t.date);
               const tMonthKey = `${tDate.getFullYear()}-${String(tDate.getMonth() + 1).padStart(2, "0")}`;
               return tMonthKey === monthKey;
@@ -182,16 +269,23 @@ export default function App() {
     }
 
     try {
-      const fsResult = await addTransactionToTable(tx);
+      // Add scheduled and isAffect properties to transaction
+      const txWithFlags = {
+        ...tx,
+        scheduled,
+        isAffect,
+      };
+      
+      const fsResult = await addTransactionToTable(txWithFlags);
       if (fsResult.error) throw fsResult.error;
-      const newTx = { id: fsResult.id, ...tx };
+      const newTx = { id: fsResult.id, ...txWithFlags };
 
       if (tx.cardId === selectedCardId) {
         setTransactions((prev) => [newTx, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
       }
 
-      // Only update balance if transaction is not scheduled (current or past)
-      if (!isScheduled(newTx)) {
+      // Only update balance if transaction affects balance (isAffect is true)
+      if (isAffect) {
         const card = cards.find((c) => c.id === newTx.cardId);
         if (card) {
           const updatedAmount = newTx.type === "cost" ? card.amount - newTx.amount : card.amount + newTx.amount;
@@ -214,7 +308,7 @@ export default function App() {
       setTransactions((prev) => prev.filter((t) => t.id !== txId));
 
       // Update card balance - reverse the transaction effect (only if it was already applied)
-      if (!isScheduled(transaction)) {
+      if (transaction.isAffect) {
         const card = cards.find((c) => c.id === transaction.cardId);
         if (card) {
           const updatedAmount =

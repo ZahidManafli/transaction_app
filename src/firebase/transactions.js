@@ -2,7 +2,7 @@ import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "./client";
 
 // Adds a transaction to Firestore "transactions" collection
-// Expected fields: cardId, title, type, category, amount, date (ISO string)
+// Expected fields: cardId, title, type, category, amount, date (ISO string), scheduled (boolean), isAffect (boolean)
 export const addTransactionToTable = async (tx) => {
   try {
     const docRef = await addDoc(collection(db, "transactions"), {
@@ -12,6 +12,8 @@ export const addTransactionToTable = async (tx) => {
       category: tx.category,
       amount: Number(tx.amount),
       date: tx.date,
+      scheduled: tx.scheduled ?? false,
+      isAffect: tx.isAffect ?? false,
       createdAt: serverTimestamp(),
     });
     return { id: docRef.id };

@@ -7,17 +7,12 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
   const [hoveredMonth, setHoveredMonth] = useState(null); // Index of hovered month
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 }); // Mouse position for tooltip
 
-  // Helper function to check if transaction is scheduled (future date)
-  const isScheduled = (tx) => {
-    const txDate = new Date(tx.date);
-    const now = new Date();
-    return txDate > now;
-  };
-
   // Separate transactions into current and scheduled
+  // Current: transactions that have affected the balance (isAffect === true)
+  // Scheduled: transactions that are scheduled but not yet affected (scheduled === true && isAffect === false)
   const { currentTransactions, scheduledTransactions } = useMemo(() => {
-    const current = transactions.filter(tx => !isScheduled(tx));
-    const scheduled = transactions.filter(tx => isScheduled(tx));
+    const current = transactions.filter(tx => tx.isAffect === true);
+    const scheduled = transactions.filter(tx => tx.scheduled === true && tx.isAffect === false);
     return { currentTransactions: current, scheduledTransactions: scheduled };
   }, [transactions]);
 

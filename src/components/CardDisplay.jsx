@@ -11,9 +11,9 @@ export default function CardDisplay({ card, onManageLimits, transactions = [] })
   const currentMonthSpending = transactions
     .filter(t => {
       if (t.type !== "cost") return false;
-      // Exclude scheduled (future) transactions
+      // Exclude transactions that don't affect balance
+      if (!t.isAffect) return false;
       const tDate = new Date(t.date);
-      if (tDate > now) return false;
       const tMonthKey = `${tDate.getFullYear()}-${String(tDate.getMonth() + 1).padStart(2, '0')}`;
       return tMonthKey === currentMonthKey;
     })

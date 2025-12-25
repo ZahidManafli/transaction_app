@@ -1,4 +1,6 @@
-export default function CardDisplay({ card, onManageLimits, onManagePlans, transactions = [] }) {
+import { useMemo } from "react";
+
+export default function CardDisplay({ card, onManageLimits, onManagePlans, onManageWishes, transactions = [] }) {
   // Extract last 4 digits
   const lastFourDigits = card.cardNumber.replace(/\s/g, "").slice(-4);
   const formattedBalance = Number(card.amount).toFixed(2).replace(".", ",");
@@ -22,6 +24,28 @@ export default function CardDisplay({ card, onManageLimits, onManagePlans, trans
   
   // Calculate current balance
   const currentBalance = Number(card.amount) || 0;
+  
+  // Get active wishes (future months or current month)
+  const activeWishes = useMemo(() => {
+    if (!card.wishes || card.wishes.length === 0) return [];
+    const now = new Date();
+    const currentMonthDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    
+    return card.wishes
+      .filter(wish => {
+        const [year, month] = wish.month.split('-').map(Number);
+        const wishMonthDate = new Date(year, month - 1, 1);
+        // Include wishes for current month or future months
+        return wishMonthDate >= currentMonthDate;
+      })
+      .sort((a, b) => {
+        const [yearA, monthA] = a.month.split('-').map(Number);
+        const [yearB, monthB] = b.month.split('-').map(Number);
+        const dateA = new Date(yearA, monthA - 1, 1);
+        const dateB = new Date(yearB, monthB - 1, 1);
+        return dateA - dateB;
+      });
+  }, [card.wishes]);
 
   const formatMonthLabel = (monthKey) => {
     const [year, month] = monthKey.split('-');
@@ -154,22 +178,87 @@ export default function CardDisplay({ card, onManageLimits, onManagePlans, trans
         </div>
       )}
 
+      {/* Active Wishes */}
+      {activeWishes.length > 0 && (
+        <div className="mt-4 w-full space-y-3">
+          {activeWishes.map((wish, index) => {
+            const progress = Math.min((currentBalance / wish.targetAmount) * 100, 100);
+            const remaining = Math.max(wish.targetAmount - currentBalance, 0);
+            const isAchieved = currentBalance >= wish.targetAmount;
+            
+            return (
+              <div key={index} className="p-3 bg-purple-50 rounded-lg w-full border border-purple-200">
+                <div className="text-sm font-medium text-gray-700 mb-1">
+                  Wish: {formatMonthLabel(wish.month)}
+                </div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-gray-600">Progress:</span>
+                  <span className={`text-sm font-semibold ${
+                    isAchieved
+                      ? "text-green-600"
+                      : progress >= 80
+                      ? "text-yellow-600"
+                      : "text-purple-600"
+                  }`}>
+                    {currentBalance.toFixed(2)} / {wish.targetAmount.toFixed(2)} ₼
+                  </span>
+                </div>
+                {/* Progress Bar */}
+                <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                  <div
+                    className={`h-2 rounded-full transition-all ${
+                      isAchieved
+                        ? "bg-green-500"
+                        : progress >= 80
+                        ? "bg-yellow-500"
+                        : "bg-purple-500"
+                    }`}
+                    style={{
+                      width: `${progress}%`
+                    }}
+                  />
+                </div>
+                {isAchieved ? (
+                  <div className="text-xs text-green-600 font-medium">
+                    🎉 Wish achieved!
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-600">
+                    {remaining.toFixed(2)} ₼ remaining to reach your wish
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Manage Buttons */}
-      <div className="mt-4 flex gap-2 w-full">
-        {onManageLimits && (
+      <div className="mt-4 flex flex-col gap-2 w-full">
+        <div className="flex gap-2">
+          {onManageLimits && (
+            <button
+              onClick={onManageLimits}
+              className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors cursor-pointer text-sm"
+            >
+              Manage Spending Limits
+            </button>
+          )}
+          {onManagePlans && (
+            <button
+              onClick={onManagePlans}
+              className="flex-1 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg font-medium hover:bg-blue-200 transition-colors cursor-pointer text-sm"
+            >
+              Manage Plans
+            </button>
+          )}
+        </div>
+        {onManageWishes && (
           <button
-            onClick={onManageLimits}
-            className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors cursor-pointer text-sm"
+            onClick={onManageWishes}
+            className="w-full px-4 py-2 bg-purple-100 text-purple-700 rounded-lg font-medium hover:bg-purple-200 transition-colors cursor-pointer text-sm"
           >
-            Manage Spending Limits
-          </button>
-        )}
-        {onManagePlans && (
-          <button
-            onClick={onManagePlans}
-            className="flex-1 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg font-medium hover:bg-blue-200 transition-colors cursor-pointer text-sm"
-          >
-            Manage Plans
+            Manage Wishes
           </button>
         )}
       </div>

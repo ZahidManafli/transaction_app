@@ -8,6 +8,7 @@ import AddCardModal from "./components/AddCardModal";
 import AddTransactionModal from "./components/AddTransactionModal";
 import CardLimitModal from "./components/CardLimitModal";
 import CardPlanModal from "./components/CardPlanModal";
+import CardWishModal from "./components/CardWishModal";
 import AuthPanel from "./components/AuthPanel";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth, db } from "./firebase/client";
@@ -33,6 +34,7 @@ export default function App() {
   const [showAddTx, setShowAddTx] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [showWishModal, setShowWishModal] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
 
   // Helper function to check if transaction is scheduled (future date)
@@ -79,6 +81,7 @@ export default function App() {
             amount: data.current_amount ?? 0,
             limits: data.limits || [],
             plans: data.plans || [],
+            wishes: data.wishes || [],
           };
         });
         setCards(fetched);
@@ -229,6 +232,7 @@ export default function App() {
         amount: Number(card.amount),
         limits: card.limits || [],
         plans: card.plans || [],
+        wishes: card.wishes || [],
       };
       setCards((prev) => [...prev, newCard]);
       setSelectedCardId(newCard.id);
@@ -438,6 +442,7 @@ export default function App() {
                 transactions={transactions.filter((t) => t.cardId === selectedCardId)}
                 onManageLimits={() => setShowLimitModal(true)}
                 onManagePlans={() => setShowPlanModal(true)}
+                onManageWishes={() => setShowWishModal(true)}
               />
             )}
 
@@ -513,6 +518,16 @@ export default function App() {
         <CardPlanModal
           card={selectedCard}
           onClose={() => setShowPlanModal(false)}
+          onUpdate={(updatedCard) => {
+            setCards(prev => prev.map(c => (c.id === updatedCard.id ? updatedCard : c)));
+          }}
+        />
+      )}
+
+      {showWishModal && selectedCard && (
+        <CardWishModal
+          card={selectedCard}
+          onClose={() => setShowWishModal(false)}
           onUpdate={(updatedCard) => {
             setCards(prev => prev.map(c => (c.id === updatedCard.id ? updatedCard : c)));
           }}

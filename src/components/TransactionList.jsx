@@ -594,7 +594,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
   };
 
   return (
-    <div className="bg-gray-50 rounded-xl p-5 h-full flex flex-col max-h-[calc(100vh-3rem)]">
+    <div className="bg-gray-50 rounded-xl p-5 flex flex-col h-[70rem]">
 
       {/* Transaction Type Tabs (Current/Scheduled) */}
       <div className="flex gap-2 mb-4 flex-shrink-0">

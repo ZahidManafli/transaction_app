@@ -9,6 +9,7 @@ export const addCardToTable = async ({ card_number, current_amount, user_id }) =
       current_amount,
       user_id,
       limits: [],
+      plans: [],
       createdAt: serverTimestamp(),
     });
     return { id: docRef.id };

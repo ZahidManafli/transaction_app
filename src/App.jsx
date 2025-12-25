@@ -7,6 +7,7 @@ import TransactionList from "./components/TransactionList";
 import AddCardModal from "./components/AddCardModal";
 import AddTransactionModal from "./components/AddTransactionModal";
 import CardLimitModal from "./components/CardLimitModal";
+import CardPlanModal from "./components/CardPlanModal";
 import AuthPanel from "./components/AuthPanel";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { auth, db } from "./firebase/client";
@@ -31,6 +32,7 @@ export default function App() {
   const [showAddCard, setShowAddCard] = useState(false);
   const [showAddTx, setShowAddTx] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
+  const [showPlanModal, setShowPlanModal] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
 
   // Helper function to check if transaction is scheduled (future date)
@@ -76,6 +78,7 @@ export default function App() {
             cardNumber: data.card_number,
             amount: data.current_amount ?? 0,
             limits: data.limits || [],
+            plans: data.plans || [],
           };
         });
         setCards(fetched);
@@ -170,7 +173,14 @@ export default function App() {
         const txRef = collection(db, "transactions");
         const q = query(txRef, where("cardId", "==", selectedCardId), orderBy("date", "desc"));
         const snapshot = await getDocs(q);
-        const fetched = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const fetched = snapshot.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ...data,
+            includeInExpected: data.includeInExpected !== undefined ? data.includeInExpected : true, // Default to true for backward compatibility
+          };
+        });
         setTransactions(fetched);
         
         // Process scheduled transactions after loading
@@ -218,6 +228,7 @@ export default function App() {
         cardNumber: card.cardNumber,
         amount: Number(card.amount),
         limits: card.limits || [],
+        plans: card.plans || [],
       };
       setCards((prev) => [...prev, newCard]);
       setSelectedCardId(newCard.id);
@@ -259,6 +270,31 @@ export default function App() {
 
           if (newTotalSpending > limit.amount) {
             const confirmMessage = `Warning: This transaction will exceed the monthly limit of ${limit.amount} ₼ for ${new Date(txDate.getFullYear(), txDate.getMonth()).toLocaleString("default", { month: "short", year: "numeric" })}.\n\nCurrent spending: ${currentMonthSpending.toFixed(2)} ₼\nAfter this transaction: ${newTotalSpending.toFixed(2)} ₼\nLimit: ${limit.amount} ₼\n\nDo you want to proceed?`;
+
+            if (!window.confirm(confirmMessage)) {
+              return; // User cancelled
+            }
+          }
+        }
+      }
+    }
+
+    // Check plan if transaction would cause balance to go below plan amount
+    if (!isFutureTransaction) {
+      const card = cards.find((c) => c.id === tx.cardId);
+      if (card && card.plans && card.plans.length > 0) {
+        const monthKey = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, "0")}`;
+        const plan = card.plans.find((p) => p.month === monthKey);
+
+        if (plan) {
+          // Calculate what the balance would be after this transaction
+          const currentBalance = card.amount || 0;
+          const newBalance = tx.type === "cost" 
+            ? currentBalance - tx.amount 
+            : currentBalance + tx.amount;
+
+          if (newBalance < plan.amount) {
+            const confirmMessage = `Warning: This transaction will cause your balance to go below the monthly plan minimum of ${plan.amount} ₼ for ${new Date(txDate.getFullYear(), txDate.getMonth()).toLocaleString("default", { month: "short", year: "numeric" })}.\n\nCurrent balance: ${currentBalance.toFixed(2)} ₼\nAfter this transaction: ${newBalance.toFixed(2)} ₼\nPlan minimum: ${plan.amount} ₼\n\nDo you want to proceed?`;
 
             if (!window.confirm(confirmMessage)) {
               return; // User cancelled
@@ -401,6 +437,7 @@ export default function App() {
                 card={selectedCard}
                 transactions={transactions.filter((t) => t.cardId === selectedCardId)}
                 onManageLimits={() => setShowLimitModal(true)}
+                onManagePlans={() => setShowPlanModal(true)}
               />
             )}
 
@@ -426,6 +463,19 @@ export default function App() {
                 transactions={transactions.filter((t) => t.cardId === selectedCardId)}
                 onDeleteTransaction={deleteTransaction}
                 currentCard={selectedCard}
+                onToggleIncludeInExpected={async (txId, newValue) => {
+                  try {
+                    await updateDoc(doc(db, "transactions", txId), {
+                      includeInExpected: newValue,
+                    });
+                    setTransactions((prev) =>
+                      prev.map((t) => (t.id === txId ? { ...t, includeInExpected: newValue } : t))
+                    );
+                  } catch (err) {
+                    console.error("Failed to update transaction", err);
+                    alert("Failed to update transaction. Please try again.");
+                  }
+                }}
               />
             </div>
           </div>
@@ -453,6 +503,16 @@ export default function App() {
         <CardLimitModal
           card={selectedCard}
           onClose={() => setShowLimitModal(false)}
+          onUpdate={(updatedCard) => {
+            setCards(prev => prev.map(c => (c.id === updatedCard.id ? updatedCard : c)));
+          }}
+        />
+      )}
+
+      {showPlanModal && selectedCard && (
+        <CardPlanModal
+          card={selectedCard}
+          onClose={() => setShowPlanModal(false)}
           onUpdate={(updatedCard) => {
             setCards(prev => prev.map(c => (c.id === updatedCard.id ? updatedCard : c)));
           }}

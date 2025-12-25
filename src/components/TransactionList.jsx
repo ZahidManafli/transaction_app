@@ -1,11 +1,12 @@
 import { useState, useMemo } from "react";
 
-export default function TransactionList({ transactions, onDeleteTransaction, currentCard }) {
+export default function TransactionList({ transactions, onDeleteTransaction, currentCard, onToggleIncludeInExpected }) {
   const [filter, setFilter] = useState("all"); // "daily", "weekly", "monthly", "all"
   const [viewMode, setViewMode] = useState("list"); // "list" or "graph"
   const [transactionTab, setTransactionTab] = useState("current"); // "current" or "scheduled"
   const [hoveredMonth, setHoveredMonth] = useState(null); // Index of hovered month
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 }); // Mouse position for tooltip
+  const [selectedMonth, setSelectedMonth] = useState("all"); // For scheduled tab monthly filter
 
   // Separate transactions into current and scheduled
   // Current: transactions that have affected the balance (isAffect === true)
@@ -19,9 +20,32 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
   // Use appropriate transaction list based on active tab
   const activeTransactions = transactionTab === "current" ? currentTransactions : scheduledTransactions;
 
+  // Get unique months from scheduled transactions for dropdown
+  const scheduledMonths = useMemo(() => {
+    const monthSet = new Set();
+    scheduledTransactions.forEach(tx => {
+      const txDate = new Date(tx.date);
+      const monthKey = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, '0')}`;
+      monthSet.add(monthKey);
+    });
+    return Array.from(monthSet).sort();
+  }, [scheduledTransactions]);
+
   // Filter transactions based on selected period (only for current transactions)
+  // For scheduled tab, filter by selected month
   const filteredTransactions = useMemo(() => {
-    const transactionsToFilter = transactionTab === "current" ? activeTransactions : activeTransactions;
+    if (transactionTab === "scheduled") {
+      if (selectedMonth === "all") return activeTransactions;
+      
+      return activeTransactions.filter(tx => {
+        const txDate = new Date(tx.date);
+        const txMonthKey = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, '0')}`;
+        return txMonthKey === selectedMonth;
+      });
+    }
+    
+    // Current transactions filtering
+    const transactionsToFilter = activeTransactions;
     
     if (filter === "all") return transactionsToFilter;
 
@@ -48,7 +72,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
       }
       return true;
     });
-  }, [activeTransactions, filter, transactionTab]);
+  }, [activeTransactions, filter, transactionTab, selectedMonth]);
 
   // Calculate total revenue (all revenue - all costs) - only for current transactions
   const totalRevenue = useMemo(() => {
@@ -64,20 +88,40 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
 
   const formattedRevenue = totalRevenue.toFixed(2).replace(".", ",");
 
-  // Calculate expected revenue for scheduled transactions
+  // Calculate expected revenue for scheduled transactions (only include transactions with includeInExpected === true)
+  // When a month is selected, include all transactions up to and including that month
   const expectedRevenue = useMemo(() => {
     if (transactionTab !== "scheduled") return { revenue: 0, cost: 0, net: 0 };
     
-    return scheduledTransactions.reduce((acc, tx) => {
-      if (tx.type === "revenue") {
-        acc.revenue += tx.amount;
-      } else {
-        acc.cost += tx.amount;
+    // Filter scheduled transactions based on selected month
+    let transactionsToCalculate = scheduledTransactions;
+    
+    if (selectedMonth !== "all") {
+      // Parse the selected month to get year and month
+      const [selectedYear, selectedMonthNum] = selectedMonth.split('-').map(Number);
+      const selectedMonthDate = new Date(selectedYear, selectedMonthNum - 1, 1);
+      
+      // Include all transactions up to and including the selected month
+      transactionsToCalculate = scheduledTransactions.filter(tx => {
+        const txDate = new Date(tx.date);
+        const txMonthDate = new Date(txDate.getFullYear(), txDate.getMonth(), 1);
+        return txMonthDate <= selectedMonthDate;
+      });
+    }
+    
+    return transactionsToCalculate.reduce((acc, tx) => {
+      // Only include transactions that are marked to be included in expected revenue
+      if (tx.includeInExpected !== false) {
+        if (tx.type === "revenue") {
+          acc.revenue += tx.amount;
+        } else {
+          acc.cost += tx.amount;
+        }
+        acc.net = acc.revenue - acc.cost;
       }
-      acc.net = acc.revenue - acc.cost;
       return acc;
     }, { revenue: 0, cost: 0, net: 0 });
-  }, [scheduledTransactions, transactionTab]);
+  }, [scheduledTransactions, transactionTab, selectedMonth]);
 
   // Calculate projected balance after scheduled transactions
   const projectedBalance = useMemo(() => {
@@ -663,6 +707,30 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
         </div>
       )}
 
+      {/* Monthly Filter for Scheduled Tab */}
+      {transactionTab === "scheduled" && scheduledMonths.length > 0 && (
+        <div className="mb-4 flex-shrink-0">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Filter by Month:
+          </label>
+          <select
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="border border-gray-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 bg-white text-sm"
+          >
+            <option value="all">All Months</option>
+            {scheduledMonths.map(monthKey => {
+              const [year, month] = monthKey.split('-');
+              const date = new Date(year, parseInt(month) - 1);
+              const monthLabel = date.toLocaleString('default', { month: 'short' }) + ' ' + year;
+              return (
+                <option key={monthKey} value={monthKey}>{monthLabel}</option>
+              );
+            })}
+          </select>
+        </div>
+      )}
+
       {/* Scheduled Transactions Info and Expected Revenue */}
       {transactionTab === "scheduled" && (
         <div className="mb-5 flex-shrink-0 space-y-3">
@@ -670,7 +738,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
           <div className="text-gray-600 text-sm bg-blue-50 p-3 rounded-lg border border-blue-200">
             <div className="font-medium text-blue-900 mb-1">Scheduled Transactions</div>
             <div className="text-blue-700 text-xs">
-              These transactions will be processed automatically when their scheduled date arrives. They do not affect your current balance or limits.
+              These transactions will be processed automatically when their scheduled date arrives. They do not affect your current balance or limits. Uncheck transactions to exclude them from expected revenue calculations.
             </div>
           </div>
           
@@ -743,6 +811,17 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
                   key={tx.id}
                   className="flex items-center gap-4 py-4 border-b border-gray-200 last:border-0 hover:bg-gray-100 transition-colors group"
                 >
+                  {/* Checkbox for scheduled transactions */}
+                  {transactionTab === "scheduled" && onToggleIncludeInExpected && (
+                    <input
+                      type="checkbox"
+                      checked={tx.includeInExpected !== false}
+                      onChange={() => onToggleIncludeInExpected(tx.id, tx.includeInExpected !== false ? false : true)}
+                      className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                      title={tx.includeInExpected !== false ? "Included in expected revenue" : "Excluded from expected revenue"}
+                    />
+                  )}
+
                   {/* Icon */}
                   {getTransactionIcon(category, tx.type)}
 
@@ -753,6 +832,9 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
                       {transactionTab === "scheduled" ? (
                         <>
                           Scheduled: {new Date(tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} at {time} · {category}
+                          {tx.includeInExpected === false && (
+                            <span className="ml-2 text-orange-600 font-medium">(Excluded from expected revenue)</span>
+                          )}
                         </>
                       ) : (
                         <>

@@ -236,14 +236,14 @@ export default function CardDisplay({ card, onManageLimits, onManagePlans, onMan
       {/* Manage Buttons */}
       <div className="mt-4 flex flex-col gap-2 w-full">
         <div className="flex gap-2">
-          {onManageLimits && (
-            <button
-              onClick={onManageLimits}
+      {onManageLimits && (
+        <button
+          onClick={onManageLimits}
               className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors cursor-pointer text-sm"
-            >
-              Manage Spending Limits
-            </button>
-          )}
+        >
+          Manage Spending Limits
+        </button>
+      )}
           {onManagePlans && (
             <button
               onClick={onManagePlans}

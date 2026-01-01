@@ -5,8 +5,15 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
   const [viewMode, setViewMode] = useState("list"); // "list" or "graph"
   const [transactionTab, setTransactionTab] = useState("current"); // "current" or "scheduled"
   const [hoveredMonth, setHoveredMonth] = useState(null); // Index of hovered month
+  const [hoveredDay, setHoveredDay] = useState(null); // Index of hovered day for daily graph
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 }); // Mouse position for tooltip
   const [selectedMonth, setSelectedMonth] = useState("all"); // For scheduled tab monthly filter
+  const [graphType, setGraphType] = useState("monthly"); // "monthly" or "daily"
+  
+  // Daily graph selectors
+  const now = new Date();
+  const [dailyYear, setDailyYear] = useState(now.getFullYear());
+  const [dailyMonth, setDailyMonth] = useState(now.getMonth() + 1); // 1-12
 
   // Separate transactions into current and scheduled
   // Current: transactions that have affected the balance (isAffect === true)
@@ -130,11 +137,10 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
     return currentBalance + expectedRevenue.net;
   }, [currentCard, expectedRevenue.net, transactionTab]);
 
-  // Process monthly data for graph - only current transactions
+  // Process monthly data for graph - current transactions
   const monthlyData = useMemo(() => {
     const monthlyMap = new Map();
     
-    // Only use current transactions for graph
     currentTransactions.forEach(tx => {
       const date = new Date(tx.date);
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
@@ -178,6 +184,119 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
     
     return sortedData;
   }, [currentTransactions]);
+
+  // Process monthly data for scheduled transactions graph
+  const scheduledMonthlyData = useMemo(() => {
+    const monthlyMap = new Map();
+    
+    scheduledTransactions.forEach(tx => {
+      const date = new Date(tx.date);
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const monthName = date.toLocaleString('default', { month: 'short' });
+      const year = date.getFullYear();
+      const monthLabel = `${monthName} ${year}`;
+      
+      if (!monthlyMap.has(monthKey)) {
+        monthlyMap.set(monthKey, {
+          month: monthLabel,
+          cost: 0,
+          revenue: 0,
+          netRevenue: 0
+        });
+      }
+      
+      const monthData = monthlyMap.get(monthKey);
+      if (tx.type === "cost") {
+        monthData.cost += tx.amount;
+      } else {
+        monthData.revenue += tx.amount;
+      }
+    });
+    
+    // Calculate net revenue (revenue - cost) for each month
+    monthlyMap.forEach((data) => {
+      data.netRevenue = data.revenue - data.cost;
+    });
+    
+    // Sort by month key and return array
+    const sortedData = Array.from(monthlyMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, data]) => data);
+    
+    // Calculate cumulative total revenue
+    let runningTotal = 0;
+    sortedData.forEach((data) => {
+      runningTotal += data.netRevenue;
+      data.totalRevenue = runningTotal;
+    });
+    
+    return sortedData;
+  }, [scheduledTransactions]);
+
+  // Get available years from transactions for daily graph
+  const availableYears = useMemo(() => {
+    const yearSet = new Set();
+    const allTx = transactionTab === "current" ? currentTransactions : scheduledTransactions;
+    allTx.forEach(tx => {
+      const date = new Date(tx.date);
+      yearSet.add(date.getFullYear());
+    });
+    // Add current year if not present
+    yearSet.add(new Date().getFullYear());
+    return Array.from(yearSet).sort((a, b) => b - a); // Descending
+  }, [currentTransactions, scheduledTransactions, transactionTab]);
+
+  // Process daily data for graph - excludes Salary and Kredit categories
+  const dailyData = useMemo(() => {
+    const dailyMap = new Map();
+    const allTx = transactionTab === "current" ? currentTransactions : scheduledTransactions;
+    
+    // Filter by selected year/month and exclude Salary and Kredit
+    const filteredTx = allTx.filter(tx => {
+      const date = new Date(tx.date);
+      const matchesYearMonth = date.getFullYear() === dailyYear && (date.getMonth() + 1) === dailyMonth;
+      const isExcludedCategory = tx.category === "Salary" || tx.category === "Kredit";
+      return matchesYearMonth && !isExcludedCategory;
+    });
+    
+    // Get number of days in the selected month
+    const daysInMonth = new Date(dailyYear, dailyMonth, 0).getDate();
+    
+    // Initialize all days
+    for (let day = 1; day <= daysInMonth; day++) {
+      dailyMap.set(day, {
+        day: day,
+        cost: 0,
+        revenue: 0,
+        netRevenue: 0
+      });
+    }
+    
+    // Populate with transaction data
+    filteredTx.forEach(tx => {
+      const date = new Date(tx.date);
+      const day = date.getDate();
+      
+      const dayData = dailyMap.get(day);
+      if (dayData) {
+        if (tx.type === "cost") {
+          dayData.cost += tx.amount;
+        } else {
+          dayData.revenue += tx.amount;
+        }
+      }
+    });
+    
+    // Calculate net revenue for each day
+    dailyMap.forEach((data) => {
+      data.netRevenue = data.revenue - data.cost;
+    });
+    
+    return Array.from(dailyMap.values());
+  }, [currentTransactions, scheduledTransactions, transactionTab, dailyYear, dailyMonth]);
+
+  // Get active monthly data based on tab
+  const activeMonthlyData = transactionTab === "current" ? monthlyData : scheduledMonthlyData;
 
   // Get icon and background color based on category
   const getTransactionIcon = (category, type) => {
@@ -266,20 +385,33 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
     }
   };
 
-  // Render Line Graph Component
-  const renderGraph = () => {
-    if (monthlyData.length === 0) {
+  // Format date for current transactions: "19 December 18:00"
+  const formatDateWithTime = (dateString) => {
+    try {
+      const date = new Date(dateString);
+      const day = date.getDate();
+      const monthName = date.toLocaleString('default', { month: 'long' });
+      const time = formatTime(dateString);
+      return `${day} ${monthName} ${time}`;
+    } catch {
+      return dateString;
+    }
+  };
+
+  // Render Monthly Line Graph Component
+  const renderMonthlyGraph = (data) => {
+    if (data.length === 0) {
       return <div className="text-center text-gray-500 py-8">No data available for graph</div>;
     }
 
     // Calculate max and min values for scaling (netRevenue and totalRevenue can be negative)
-    const allValues = monthlyData.flatMap(d => [d.cost, d.revenue, d.netRevenue, d.totalRevenue]);
+    const allValues = data.flatMap(d => [d.cost, d.revenue, d.netRevenue, d.totalRevenue]);
     const maxValue = Math.max(...allValues, 1);
     const minValue = Math.min(...allValues, 0);
     const valueRange = maxValue - minValue || 1;
     
     const graphHeight = 300;
-    const graphWidth = Math.max(400, monthlyData.length * 80);
+    const graphWidth = Math.max(400, data.length * 80);
     const padding = 50;
     const chartHeight = graphHeight - padding * 2;
     const chartWidth = graphWidth - padding * 2;
@@ -291,26 +423,26 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
     };
 
     // Calculate points for lines
-    const costPoints = monthlyData.map((d, i) => {
-      const x = padding + (i / (monthlyData.length - 1 || 1)) * chartWidth;
+    const costPoints = data.map((d, i) => {
+      const x = padding + (i / (data.length - 1 || 1)) * chartWidth;
       const y = getYPosition(d.cost);
       return { x, y };
     });
 
-    const revenuePoints = monthlyData.map((d, i) => {
-      const x = padding + (i / (monthlyData.length - 1 || 1)) * chartWidth;
+    const revenuePoints = data.map((d, i) => {
+      const x = padding + (i / (data.length - 1 || 1)) * chartWidth;
       const y = getYPosition(d.revenue);
       return { x, y };
     });
 
-    const netRevenuePoints = monthlyData.map((d, i) => {
-      const x = padding + (i / (monthlyData.length - 1 || 1)) * chartWidth;
+    const netRevenuePoints = data.map((d, i) => {
+      const x = padding + (i / (data.length - 1 || 1)) * chartWidth;
       const y = getYPosition(d.netRevenue);
       return { x, y };
     });
 
-    const totalRevenuePoints = monthlyData.map((d, i) => {
-      const x = padding + (i / (monthlyData.length - 1 || 1)) * chartWidth;
+    const totalRevenuePoints = data.map((d, i) => {
+      const x = padding + (i / (data.length - 1 || 1)) * chartWidth;
       const y = getYPosition(d.totalRevenue);
       return { x, y };
     });
@@ -499,8 +631,8 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
             ))}
 
             {/* X-axis labels */}
-            {monthlyData.map((d, i) => {
-              const x = padding + (i / (monthlyData.length - 1 || 1)) * chartWidth;
+            {data.map((d, i) => {
+              const x = padding + (i / (data.length - 1 || 1)) * chartWidth;
               return (
                 <text
                   key={i}
@@ -535,7 +667,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
           </svg>
           
           {/* Tooltip */}
-          {hoveredMonth !== null && (
+          {hoveredMonth !== null && data[hoveredMonth] && (
             <div
               className="fixed bg-white border border-gray-300 rounded-lg shadow-lg p-3 z-50 pointer-events-none"
               style={{
@@ -547,27 +679,27 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
               }}
             >
               <div className="font-semibold text-gray-900 mb-2 border-b pb-2">
-                {monthlyData[hoveredMonth].month}
+                {data[hoveredMonth].month}
               </div>
               <div className="text-sm space-y-1">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Spending:</span>
-                  <span className="text-red-600 font-semibold">{monthlyData[hoveredMonth].cost.toFixed(2)} ₼</span>
+                  <span className="text-red-600 font-semibold">{data[hoveredMonth].cost.toFixed(2)} ₼</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Money Added:</span>
-                  <span className="text-yellow-600 font-semibold">{monthlyData[hoveredMonth].revenue.toFixed(2)} ₼</span>
+                  <span className="text-yellow-600 font-semibold">{data[hoveredMonth].revenue.toFixed(2)} ₼</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Net Revenue:</span>
-                  <span className={`font-semibold ${monthlyData[hoveredMonth].netRevenue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {monthlyData[hoveredMonth].netRevenue.toFixed(2)} ₼
+                  <span className={`font-semibold ${data[hoveredMonth].netRevenue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {data[hoveredMonth].netRevenue.toFixed(2)} ₼
                   </span>
                 </div>
                 <div className="flex justify-between border-t pt-1 mt-1">
                   <span className="text-gray-600 font-semibold">Total Revenue:</span>
-                  <span className={`font-semibold ${monthlyData[hoveredMonth].totalRevenue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {monthlyData[hoveredMonth].totalRevenue.toFixed(2)} ₼
+                  <span className={`font-semibold ${data[hoveredMonth].totalRevenue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {data[hoveredMonth].totalRevenue.toFixed(2)} ₼
                   </span>
                 </div>
               </div>
@@ -575,7 +707,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
           )}
         </div>
         <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
-          {monthlyData.map((d, i) => (
+          {data.map((d, i) => (
             <div key={i} className="bg-white p-3 rounded-lg">
               <div className="font-semibold text-gray-900">{d.month}</div>
               <div className="text-red-600 mt-1">Spending: {d.cost.toFixed(2)} ₼</div>
@@ -589,6 +721,357 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
             </div>
           ))}
         </div>
+      </div>
+    );
+  };
+
+  // Render Daily Line Graph Component
+  const renderDailyGraph = () => {
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                        'July', 'August', 'September', 'October', 'November', 'December'];
+    
+    // Check if there's any data
+    const hasData = dailyData.some(d => d.cost > 0 || d.revenue > 0);
+    
+    if (!hasData) {
+      return (
+        <div className="text-center text-gray-500 py-8">
+          No data available for {monthNames[dailyMonth - 1]} {dailyYear} (excluding Salary and Kredit)
+        </div>
+      );
+    }
+
+    // Calculate max and min values for scaling
+    const allValues = dailyData.flatMap(d => [d.cost, d.revenue, d.netRevenue]);
+    const maxValue = Math.max(...allValues, 1);
+    const minValue = Math.min(...allValues, 0);
+    const valueRange = maxValue - minValue || 1;
+    
+    const graphHeight = 300;
+    const graphWidth = Math.max(600, dailyData.length * 25);
+    const padding = 50;
+    const chartHeight = graphHeight - padding * 2;
+    const chartWidth = graphWidth - padding * 2;
+
+    // Helper function to calculate Y position (handles negative values)
+    const getYPosition = (value) => {
+      const normalizedValue = (value - minValue) / valueRange;
+      return padding + chartHeight - (normalizedValue * chartHeight);
+    };
+
+    // Calculate points for lines
+    const costPoints = dailyData.map((d, i) => {
+      const x = padding + (i / (dailyData.length - 1 || 1)) * chartWidth;
+      const y = getYPosition(d.cost);
+      return { x, y };
+    });
+
+    const revenuePoints = dailyData.map((d, i) => {
+      const x = padding + (i / (dailyData.length - 1 || 1)) * chartWidth;
+      const y = getYPosition(d.revenue);
+      return { x, y };
+    });
+
+    const netRevenuePoints = dailyData.map((d, i) => {
+      const x = padding + (i / (dailyData.length - 1 || 1)) * chartWidth;
+      const y = getYPosition(d.netRevenue);
+      return { x, y };
+    });
+
+    // Create path strings
+    const costPath = costPoints.map((p, i) => 
+      `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
+    ).join(' ');
+
+    const revenuePath = revenuePoints.map((p, i) => 
+      `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
+    ).join(' ');
+
+    const netRevenuePath = netRevenuePoints.map((p, i) => 
+      `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
+    ).join(' ');
+
+    const handlePointHover = (dayIndex, event) => {
+      setHoveredDay(dayIndex);
+      setMousePosition({
+        x: event.clientX,
+        y: event.clientY
+      });
+    };
+
+    const handlePointLeave = () => {
+      setHoveredDay(null);
+    };
+
+    return (
+      <div className="w-full relative">
+        <div className="flex justify-center mb-4">
+          <div className="flex gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 bg-red-600"></div>
+              <span className="text-sm text-gray-700">Spending</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 bg-yellow-500"></div>
+              <span className="text-sm text-gray-700">Money Added</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-0.5 bg-blue-600"></div>
+              <span className="text-sm text-gray-700">Net Revenue</span>
+            </div>
+          </div>
+        </div>
+        <p className="text-center text-xs text-gray-500 mb-4">
+          Note: Salary and Kredit transactions are excluded from this view
+        </p>
+        <div className="overflow-x-auto relative">
+          <svg 
+            viewBox={`0 0 ${graphWidth} ${graphHeight}`} 
+            className="w-full h-80"
+            preserveAspectRatio="none"
+            onMouseLeave={handlePointLeave}
+          >
+            {/* Grid lines */}
+            {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+              const y = padding + chartHeight - (ratio * chartHeight);
+              return (
+                <line
+                  key={ratio}
+                  x1={padding}
+                  y1={y}
+                  x2={padding + chartWidth}
+                  y2={y}
+                  stroke="#e5e7eb"
+                  strokeWidth="1"
+                />
+              );
+            })}
+
+            {/* Cost line */}
+            <path
+              d={costPath}
+              fill="none"
+              stroke="#dc2626"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            
+            {/* Revenue line (Money Added) - Yellow */}
+            <path
+              d={revenuePath}
+              fill="none"
+              stroke="#eab308"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+
+            {/* Net Revenue line - Blue */}
+            <path
+              d={netRevenuePath}
+              fill="none"
+              stroke="#2563eb"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+
+            {/* Zero line (for reference when net revenue is negative) */}
+            {minValue < 0 && (
+              <line
+                x1={padding}
+                y1={getYPosition(0)}
+                x2={padding + chartWidth}
+                y2={getYPosition(0)}
+                stroke="#9ca3af"
+                strokeWidth="1"
+                strokeDasharray="4 4"
+              />
+            )}
+
+            {/* Cost points */}
+            {costPoints.map((point, i) => (
+              <circle
+                key={`cost-${i}`}
+                cx={point.x}
+                cy={point.y}
+                r="4"
+                fill="#dc2626"
+                style={{ cursor: 'pointer' }}
+                onMouseEnter={(e) => handlePointHover(i, e)}
+                onMouseMove={(e) => handlePointHover(i, e)}
+              />
+            ))}
+
+            {/* Revenue points (Money Added) - Yellow */}
+            {revenuePoints.map((point, i) => (
+              <circle
+                key={`revenue-${i}`}
+                cx={point.x}
+                cy={point.y}
+                r="4"
+                fill="#eab308"
+                style={{ cursor: 'pointer' }}
+                onMouseEnter={(e) => handlePointHover(i, e)}
+                onMouseMove={(e) => handlePointHover(i, e)}
+              />
+            ))}
+
+            {/* Net Revenue points - Blue */}
+            {netRevenuePoints.map((point, i) => (
+              <circle
+                key={`netRevenue-${i}`}
+                cx={point.x}
+                cy={point.y}
+                r="4"
+                fill="#2563eb"
+                style={{ cursor: 'pointer' }}
+                onMouseEnter={(e) => handlePointHover(i, e)}
+                onMouseMove={(e) => handlePointHover(i, e)}
+              />
+            ))}
+
+            {/* X-axis labels (show every 5th day to avoid crowding) */}
+            {dailyData.map((d, i) => {
+              if (i % 5 === 0 || i === dailyData.length - 1) {
+                const x = padding + (i / (dailyData.length - 1 || 1)) * chartWidth;
+                return (
+                  <text
+                    key={i}
+                    x={x}
+                    y={graphHeight - 10}
+                    textAnchor="middle"
+                    fontSize="10"
+                    fill="#6b7280"
+                  >
+                    {d.day}
+                  </text>
+                );
+              }
+              return null;
+            })}
+
+            {/* Y-axis labels */}
+            {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+              const value = minValue + (valueRange * ratio);
+              const y = getYPosition(value);
+              return (
+                <text
+                  key={ratio}
+                  x={padding - 5}
+                  y={y + 4}
+                  textAnchor="end"
+                  fontSize="10"
+                  fill="#6b7280"
+                >
+                  {value.toFixed(0)}
+                </text>
+              );
+            })}
+          </svg>
+          
+          {/* Tooltip */}
+          {hoveredDay !== null && dailyData[hoveredDay] && (
+            <div
+              className="fixed bg-white border border-gray-300 rounded-lg shadow-lg p-3 z-50 pointer-events-none"
+              style={{
+                left: `${mousePosition.x + 15}px`,
+                top: `${mousePosition.y - 10}px`,
+                transform: 'translateY(-50%)',
+                minWidth: '180px',
+                maxWidth: '220px'
+              }}
+            >
+              <div className="font-semibold text-gray-900 mb-2 border-b pb-2">
+                Day {dailyData[hoveredDay].day}
+              </div>
+              <div className="text-sm space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Spending:</span>
+                  <span className="text-red-600 font-semibold">{dailyData[hoveredDay].cost.toFixed(2)} ₼</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Money Added:</span>
+                  <span className="text-yellow-600 font-semibold">{dailyData[hoveredDay].revenue.toFixed(2)} ₼</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Net Revenue:</span>
+                  <span className={`font-semibold ${dailyData[hoveredDay].netRevenue >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {dailyData[hoveredDay].netRevenue.toFixed(2)} ₼
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Main render graph function
+  const renderGraph = () => {
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                        'July', 'August', 'September', 'October', 'November', 'December'];
+    
+    return (
+      <div className="w-full">
+        {/* Graph Type Toggle */}
+        <div className="flex gap-2 mb-4 justify-center">
+          <button
+            onClick={() => setGraphType("monthly")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+              graphType === "monthly"
+                ? "bg-blue-600 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-200"
+            }`}
+          >
+            Monthly
+          </button>
+          <button
+            onClick={() => setGraphType("daily")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+              graphType === "daily"
+                ? "bg-blue-600 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-200"
+            }`}
+          >
+            Daily
+          </button>
+        </div>
+
+        {/* Daily Graph Selectors */}
+        {graphType === "daily" && (
+          <div className="flex gap-4 mb-4 justify-center items-center">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-gray-700">Year:</label>
+              <select
+                value={dailyYear}
+                onChange={(e) => setDailyYear(Number(e.target.value))}
+                className="border border-gray-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-sm"
+              >
+                {availableYears.map(year => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-gray-700">Month:</label>
+              <select
+                value={dailyMonth}
+                onChange={(e) => setDailyMonth(Number(e.target.value))}
+                className="border border-gray-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white text-sm"
+              >
+                {monthNames.map((month, i) => (
+                  <option key={i + 1} value={i + 1}>{month}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {/* Render appropriate graph */}
+        {graphType === "monthly" ? renderMonthlyGraph(activeMonthlyData) : renderDailyGraph()}
       </div>
     );
   };
@@ -626,31 +1109,29 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
         </button>
       </div>
 
-      {/* View Mode Tabs - Only show for current transactions */}
-      {transactionTab === "current" && (
-        <div className="flex gap-2 mb-4 flex-shrink-0">
-          <button
-            onClick={() => setViewMode("list")}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-              viewMode === "list"
-                ? "bg-red-600 text-white"
-                : "bg-white text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            List
-          </button>
-          <button
-            onClick={() => setViewMode("graph")}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-              viewMode === "graph"
-                ? "bg-red-600 text-white"
-                : "bg-white text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            Graph
-          </button>
-        </div>
-      )}
+      {/* View Mode Tabs - Show for both current and scheduled tabs */}
+      <div className="flex gap-2 mb-4 flex-shrink-0">
+        <button
+          onClick={() => setViewMode("list")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+            viewMode === "list"
+              ? "bg-red-600 text-white"
+              : "bg-white text-gray-700 hover:bg-gray-100"
+          }`}
+        >
+          List
+        </button>
+        <button
+          onClick={() => setViewMode("graph")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+            viewMode === "graph"
+              ? "bg-red-600 text-white"
+              : "bg-white text-gray-700 hover:bg-gray-100"
+          }`}
+        >
+          Graph
+        </button>
+      </div>
 
       {/* Filter Buttons - Only show in list view and for current transactions */}
       {viewMode === "list" && transactionTab === "current" && (
@@ -795,7 +1276,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
       )}
 
       <div className="overflow-y-auto flex-1 min-h-0">
-        {viewMode === "graph" && transactionTab === "current" ? (
+        {viewMode === "graph" ? (
           renderGraph()
         ) : (
           filteredTransactions.length === 0 ? (
@@ -838,7 +1319,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
                         </>
                       ) : (
                         <>
-                          {time} · {category}
+                          {formatDateWithTime(tx.date)} · {category}
                         </>
                       )}
                     </div>

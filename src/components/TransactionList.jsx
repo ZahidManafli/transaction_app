@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { analyzeFinances, saveAnalysis, loadAnalysis } from "../services/openaiAnalysis";
+import { analyzeFinances, saveAnalysis, loadAnalysis } from "../services/mlAnalysis";
 
 export default function TransactionList({ transactions, onDeleteTransaction, currentCard, onToggleIncludeInExpected }) {
   const [filter, setFilter] = useState("all"); // "daily", "weekly", "monthly", "all"
@@ -1156,9 +1156,9 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
             </svg>
           </div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">AI Financial Analysis</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Local ML Analysis</h3>
           <p className="text-gray-500 text-center text-sm mb-6 max-w-md">
-            Get AI-powered insights on your spending patterns and predictions for the next 3 months based on your transaction history.
+            Analyze your spending patterns using a local machine learning model. Runs entirely in your browser - no API costs, full privacy.
           </p>
           <button
             onClick={handleNewAnalysis}
@@ -1339,7 +1339,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
                 <circle cx="12" cy="12" r="10"/>
                 <path d="M12 16v-4M12 8h.01"/>
               </svg>
-              AI Insights
+              ML Insights
             </h4>
             <ul className="space-y-2">
               {analysisData.insights.map((insight, i) => (
@@ -1434,7 +1434,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
               : "bg-white text-gray-700 hover:bg-gray-100"
           }`}
         >
-          AI Analysis
+          ML Analysis
         </button>
       </div>
 

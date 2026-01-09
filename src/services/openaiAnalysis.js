@@ -133,8 +133,8 @@ IMPORTANT:
 - Include all categories that have significant transactions
 - Amounts should be in the same currency (AZN/₼)`;
 
-  // Gemini API endpoint
-  const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  // Gemini API endpoint (gemini-2.0-flash)
+  const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
   try {
     const response = await fetch(GEMINI_API_URL, {
@@ -154,8 +154,7 @@ IMPORTANT:
         ],
         generationConfig: {
           temperature: 0.7,
-          maxOutputTokens: 2048,
-          responseMimeType: "application/json"
+          maxOutputTokens: 2048
         }
       })
     });

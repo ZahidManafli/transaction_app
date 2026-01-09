@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { analyzeFinances, saveAnalysis, loadAnalysis } from "../services/openaiAnalysis";
 
 export default function TransactionList({ transactions, onDeleteTransaction, currentCard, onToggleIncludeInExpected }) {
   const [filter, setFilter] = useState("all"); // "daily", "weekly", "monthly", "all"
   const [viewMode, setViewMode] = useState("list"); // "list" or "graph"
-  const [transactionTab, setTransactionTab] = useState("current"); // "current" or "scheduled"
+  const [transactionTab, setTransactionTab] = useState("current"); // "current", "scheduled", or "analysis"
   const [hoveredMonth, setHoveredMonth] = useState(null); // Index of hovered month
   const [hoveredDay, setHoveredDay] = useState(null); // Index of hovered day for daily graph
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 }); // Mouse position for tooltip
@@ -14,6 +15,21 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
   const now = new Date();
   const [dailyYear, setDailyYear] = useState(now.getFullYear());
   const [dailyMonth, setDailyMonth] = useState(now.getMonth() + 1); // 1-12
+
+  // AI Analysis state
+  const [analysisData, setAnalysisData] = useState(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState(null);
+
+  // Load analysis from localStorage when switching to analysis tab
+  useEffect(() => {
+    if (transactionTab === "analysis") {
+      const storedAnalysis = loadAnalysis();
+      if (storedAnalysis) {
+        setAnalysisData(storedAnalysis);
+      }
+    }
+  }, [transactionTab]);
 
   // Separate transactions into current and scheduled
   // Current: transactions that have affected the balance (isAffect === true)
@@ -119,12 +135,12 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
     return transactionsToCalculate.reduce((acc, tx) => {
       // Only include transactions that are marked to be included in expected revenue
       if (tx.includeInExpected !== false) {
-        if (tx.type === "revenue") {
-          acc.revenue += tx.amount;
-        } else {
-          acc.cost += tx.amount;
-        }
-        acc.net = acc.revenue - acc.cost;
+      if (tx.type === "revenue") {
+        acc.revenue += tx.amount;
+      } else {
+        acc.cost += tx.amount;
+      }
+      acc.net = acc.revenue - acc.cost;
       }
       return acc;
     }, { revenue: 0, cost: 0, net: 0 });
@@ -734,7 +750,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
     const hasData = dailyData.some(d => d.cost > 0 || d.revenue > 0);
     
     if (!hasData) {
-      return (
+  return (
         <div className="text-center text-gray-500 py-8">
           No data available for {monthNames[dailyMonth - 1]} {dailyYear} (excluding Salary and Kredit)
         </div>
@@ -1076,10 +1092,311 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
     );
   };
 
+  // Handle new analysis request
+  const handleNewAnalysis = async () => {
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    
+    try {
+      // Use current transactions for analysis
+      const analysis = await analyzeFinances(currentTransactions);
+      saveAnalysis(analysis);
+      setAnalysisData(analysis);
+    } catch (error) {
+      setAnalysisError(error.message);
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
+  // Render AI Analysis Tab
+  const renderAnalysis = () => {
+    // Loading state
+    if (analysisLoading) {
+      return (
+        <div className="flex flex-col items-center justify-center py-12">
+          <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin mb-4"></div>
+          <p className="text-gray-600 font-medium">Analyzing your finances...</p>
+          <p className="text-gray-400 text-sm mt-2">This may take a few seconds</p>
+        </div>
+      );
+    }
+
+    // Error state
+    if (analysisError) {
+      return (
+        <div className="p-4">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="flex items-center gap-2 text-red-700 font-medium mb-2">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              Analysis Error
+            </div>
+            <p className="text-red-600 text-sm">{analysisError}</p>
+          </div>
+          <button
+            onClick={handleNewAnalysis}
+            className="w-full px-4 py-3 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-colors cursor-pointer"
+          >
+            Try Again
+          </button>
+        </div>
+      );
+    }
+
+    // No data state
+    if (!analysisData) {
+      return (
+        <div className="flex flex-col items-center justify-center py-12 px-4">
+          <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mb-4">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#9333ea" strokeWidth="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">AI Financial Analysis</h3>
+          <p className="text-gray-500 text-center text-sm mb-6 max-w-md">
+            Get AI-powered insights on your spending patterns and predictions for the next 3 months based on your transaction history.
+          </p>
+          <button
+            onClick={handleNewAnalysis}
+            disabled={currentTransactions.length === 0}
+            className={`px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer ${
+              currentTransactions.length === 0
+                ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                : "bg-purple-600 text-white hover:bg-purple-700"
+            }`}
+          >
+            {currentTransactions.length === 0 ? "No transactions to analyze" : "Analyze My Finances"}
+          </button>
+          {currentTransactions.length === 0 && (
+            <p className="text-gray-400 text-xs mt-3">Add some transactions first to use AI analysis</p>
+          )}
+        </div>
+      );
+    }
+
+    // Display analysis results
+    return (
+      <div className="space-y-4 p-2">
+        {/* Header with refresh button */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Financial Analysis</h3>
+            {analysisData.metadata?.analyzedAt && (
+              <p className="text-xs text-gray-500">
+                Last analyzed: {new Date(analysisData.metadata.analyzedAt).toLocaleString()}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={handleNewAnalysis}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors cursor-pointer flex items-center gap-2"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+            </svg>
+            New Analysis
+          </button>
+        </div>
+
+        {/* Summary Section */}
+        {analysisData.summary && (
+          <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+            <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" strokeWidth="2">
+                <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                <path d="M9 12l2 2 4-4"/>
+              </svg>
+              Summary
+            </h4>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-gray-500">Avg. Monthly Spending:</span>
+                <p className="font-semibold text-red-600">
+                  {analysisData.summary.averageMonthlySpending?.toFixed(2) || '0.00'} ₼
+                </p>
+              </div>
+              <div>
+                <span className="text-gray-500">Avg. Monthly Revenue:</span>
+                <p className="font-semibold text-green-600">
+                  {analysisData.summary.averageMonthlyRevenue?.toFixed(2) || '0.00'} ₼
+                </p>
+              </div>
+              {analysisData.summary.spendingTrend && (
+                <div className="col-span-2">
+                  <span className="text-gray-500">Spending Trend:</span>
+                  <p className={`font-semibold ${
+                    analysisData.summary.spendingTrend === 'increasing' ? 'text-red-600' :
+                    analysisData.summary.spendingTrend === 'decreasing' ? 'text-green-600' : 'text-gray-600'
+                  }`}>
+                    {analysisData.summary.spendingTrend.charAt(0).toUpperCase() + analysisData.summary.spendingTrend.slice(1)}
+                  </p>
+                </div>
+              )}
+              {analysisData.summary.topSpendingCategories && (
+                <div className="col-span-2">
+                  <span className="text-gray-500">Top Spending Categories:</span>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {analysisData.summary.topSpendingCategories.map((cat, i) => (
+                      <span key={i} className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-medium">
+                        {cat}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Predictions Section */}
+        {analysisData.predictions && (
+          <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+            <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" strokeWidth="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+              </svg>
+              3-Month Predictions
+            </h4>
+            
+            {/* Monthly Totals */}
+            {analysisData.predictions.months && (
+              <div className="mb-4">
+                <div className="grid grid-cols-3 gap-2 text-center text-sm">
+                  {analysisData.predictions.months.map((month, i) => (
+                    <div key={i} className="bg-gray-50 p-3 rounded-lg">
+                      <p className="text-gray-600 font-medium mb-2">{month}</p>
+                      {analysisData.predictions.totalCost && (
+                        <p className="text-red-600 text-xs">
+                          Cost: {analysisData.predictions.totalCost[i]?.toFixed(0) || '0'} ₼
+                        </p>
+                      )}
+                      {analysisData.predictions.totalRevenue && (
+                        <p className="text-green-600 text-xs">
+                          Revenue: {analysisData.predictions.totalRevenue[i]?.toFixed(0) || '0'} ₼
+                        </p>
+                      )}
+                      {analysisData.predictions.netBalance && (
+                        <p className={`font-semibold text-xs mt-1 ${
+                          analysisData.predictions.netBalance[i] >= 0 ? 'text-green-700' : 'text-red-700'
+                        }`}>
+                          Net: {analysisData.predictions.netBalance[i]?.toFixed(0) || '0'} ₼
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Category Predictions */}
+            {analysisData.predictions.costs && Object.keys(analysisData.predictions.costs).length > 0 && (
+              <div className="mt-4">
+                <p className="text-sm font-medium text-gray-700 mb-2">Predicted Costs by Category:</p>
+                <div className="space-y-2">
+                  {Object.entries(analysisData.predictions.costs).map(([category, values]) => (
+                    <div key={category} className="flex items-center justify-between text-sm bg-red-50 p-2 rounded">
+                      <span className="text-gray-700">{category}</span>
+                      <div className="flex gap-3 text-red-600">
+                        {Array.isArray(values) && values.map((v, i) => (
+                          <span key={i} className="text-xs">{v?.toFixed(0) || '0'} ₼</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {analysisData.predictions.revenue && Object.keys(analysisData.predictions.revenue).length > 0 && (
+              <div className="mt-4">
+                <p className="text-sm font-medium text-gray-700 mb-2">Predicted Revenue by Category:</p>
+                <div className="space-y-2">
+                  {Object.entries(analysisData.predictions.revenue).map(([category, values]) => (
+                    <div key={category} className="flex items-center justify-between text-sm bg-green-50 p-2 rounded">
+                      <span className="text-gray-700">{category}</span>
+                      <div className="flex gap-3 text-green-600">
+                        {Array.isArray(values) && values.map((v, i) => (
+                          <span key={i} className="text-xs">{v?.toFixed(0) || '0'} ₼</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Insights Section */}
+        {analysisData.insights && analysisData.insights.length > 0 && (
+          <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+            <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 16v-4M12 8h.01"/>
+              </svg>
+              AI Insights
+            </h4>
+            <ul className="space-y-2">
+              {analysisData.insights.map((insight, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
+                  <span className="text-purple-500 mt-0.5">•</span>
+                  {insight}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Category Breakdown */}
+        {analysisData.categoryBreakdown && Object.keys(analysisData.categoryBreakdown).length > 0 && (
+          <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+            <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M3 9h18M9 21V9"/>
+              </svg>
+              Category Analysis
+            </h4>
+            <div className="space-y-3">
+              {Object.entries(analysisData.categoryBreakdown).map(([category, data]) => (
+                <div key={category} className="border-b border-gray-100 pb-2 last:border-0">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-gray-800">{category}</span>
+                    <span className={`text-xs px-2 py-1 rounded ${
+                      data.predictedTrend === 'up' ? 'bg-red-100 text-red-700' :
+                      data.predictedTrend === 'down' ? 'bg-green-100 text-green-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {data.predictedTrend === 'up' ? '↑ Increasing' :
+                       data.predictedTrend === 'down' ? '↓ Decreasing' : '→ Stable'}
+                    </span>
+                  </div>
+                  {data.currentAverage && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Current avg: {data.currentAverage.toFixed(2)} ₼
+                    </p>
+                  )}
+                  {data.recommendation && (
+                    <p className="text-xs text-purple-600 mt-1 italic">{data.recommendation}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="bg-gray-50 rounded-xl p-5 flex flex-col h-[70rem]">
 
-      {/* Transaction Type Tabs (Current/Scheduled) */}
+      {/* Transaction Type Tabs (Current/Scheduled/Analysis) */}
       <div className="flex gap-2 mb-4 flex-shrink-0">
         <button
           onClick={() => {
@@ -1107,31 +1424,45 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
         >
           Scheduled ({scheduledTransactions.length})
         </button>
+        <button
+          onClick={() => {
+            setTransactionTab("analysis");
+          }}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+            transactionTab === "analysis"
+              ? "bg-purple-600 text-white"
+              : "bg-white text-gray-700 hover:bg-gray-100"
+          }`}
+        >
+          AI Analysis
+        </button>
       </div>
 
-      {/* View Mode Tabs - Show for both current and scheduled tabs */}
-      <div className="flex gap-2 mb-4 flex-shrink-0">
-        <button
-          onClick={() => setViewMode("list")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-            viewMode === "list"
-              ? "bg-red-600 text-white"
-              : "bg-white text-gray-700 hover:bg-gray-100"
-          }`}
-        >
-          List
-        </button>
-        <button
-          onClick={() => setViewMode("graph")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-            viewMode === "graph"
-              ? "bg-red-600 text-white"
-              : "bg-white text-gray-700 hover:bg-gray-100"
-          }`}
-        >
-          Graph
-        </button>
-      </div>
+      {/* View Mode Tabs - Show for current and scheduled tabs only */}
+      {transactionTab !== "analysis" && (
+        <div className="flex gap-2 mb-4 flex-shrink-0">
+          <button
+            onClick={() => setViewMode("list")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+              viewMode === "list"
+                ? "bg-red-600 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            List
+          </button>
+          <button
+            onClick={() => setViewMode("graph")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+              viewMode === "graph"
+                ? "bg-red-600 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            Graph
+          </button>
+        </div>
+      )}
 
       {/* Filter Buttons - Only show in list view and for current transactions */}
       {viewMode === "list" && transactionTab === "current" && (
@@ -1276,7 +1607,9 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
       )}
 
       <div className="overflow-y-auto flex-1 min-h-0">
-        {viewMode === "graph" ? (
+        {transactionTab === "analysis" ? (
+          renderAnalysis()
+        ) : viewMode === "graph" ? (
           renderGraph()
         ) : (
           filteredTransactions.length === 0 ? (

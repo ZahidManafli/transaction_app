@@ -1,6 +1,5 @@
-// OpenAI Analysis Service for Financial Predictions
+// Gemini Analysis Service for Financial Predictions
 
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const LOCAL_STORAGE_KEY = 'ai_financial_analysis';
 
 /**
@@ -68,13 +67,13 @@ const getNext3Months = () => {
 };
 
 /**
- * Call OpenAI API for financial analysis
+ * Call Google Gemini API for financial analysis
  */
 export const analyzeFinances = async (transactions) => {
-  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   
   if (!apiKey) {
-    throw new Error('OpenAI API key not found. Please add VITE_OPENAI_API_KEY to your .env file.');
+    throw new Error('Gemini API key not found. Please add VITE_GEMINI_API_KEY to your .env file. Get your free API key from: https://aistudio.google.com/app/apikey');
   }
   
   if (!transactions || transactions.length === 0) {
@@ -134,40 +133,46 @@ IMPORTANT:
 - Include all categories that have significant transactions
 - Amounts should be in the same currency (AZN/₼)`;
 
+  // Gemini API endpoint
+  const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
   try {
-    const response = await fetch(OPENAI_API_URL, {
+    const response = await fetch(GEMINI_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
-        messages: [
+        contents: [
           {
-            role: 'system',
-            content: 'You are a financial analyst that provides JSON responses only. Never include markdown formatting or code blocks in your response.'
-          },
-          {
-            role: 'user',
-            content: prompt
+            parts: [
+              {
+                text: prompt
+              }
+            ]
           }
         ],
-        temperature: 0.7,
-        max_tokens: 2000
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 2048,
+          responseMimeType: "application/json"
+        }
       })
     });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error?.message || `API request failed with status ${response.status}`);
+      const errorMessage = errorData.error?.message || `API request failed with status ${response.status}`;
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();
-    const content = data.choices[0]?.message?.content;
+    
+    // Extract content from Gemini response format
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
     
     if (!content) {
-      throw new Error('No response content from OpenAI');
+      throw new Error('No response content from Gemini');
     }
     
     // Parse JSON response (handle potential markdown code blocks)
@@ -258,4 +263,3 @@ export const hasRecentAnalysis = () => {
   
   return hoursDiff < 24;
 };
-

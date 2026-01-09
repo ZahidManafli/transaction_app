@@ -20,6 +20,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
   const [analysisData, setAnalysisData] = useState(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
+  const [analysisViewMode, setAnalysisViewMode] = useState("list"); // "list" or "graph"
 
   // Load analysis from localStorage when switching to analysis tab
   useEffect(() => {
@@ -1098,8 +1099,8 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
     setAnalysisError(null);
     
     try {
-      // Use current transactions for analysis
-      const analysis = await analyzeFinances(currentTransactions);
+      // Use all transactions (both current and scheduled) for analysis
+      const analysis = await analyzeFinances(transactions);
       saveAnalysis(analysis);
       setAnalysisData(analysis);
     } catch (error) {
@@ -1162,17 +1163,17 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
           </p>
           <button
             onClick={handleNewAnalysis}
-            disabled={currentTransactions.length === 0}
+            disabled={transactions.length === 0}
             className={`px-6 py-3 rounded-lg font-medium transition-colors cursor-pointer ${
-              currentTransactions.length === 0
+              transactions.length === 0
                 ? "bg-gray-200 text-gray-500 cursor-not-allowed"
                 : "bg-purple-600 text-white hover:bg-purple-700"
             }`}
           >
-            {currentTransactions.length === 0 ? "No transactions to analyze" : "Analyze My Finances"}
+            {transactions.length === 0 ? "No transactions to analyze" : "Analyze My Finances"}
           </button>
-          {currentTransactions.length === 0 && (
-            <p className="text-gray-400 text-xs mt-3">Add some transactions first to use AI analysis</p>
+          {transactions.length === 0 && (
+            <p className="text-gray-400 text-xs mt-3">Add some transactions first to use ML analysis</p>
           )}
         </div>
       );
@@ -1202,8 +1203,204 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
           </button>
         </div>
 
-        {/* Summary Section */}
-        {analysisData.summary && (
+        {/* List/Graph View Toggle */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setAnalysisViewMode("list")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+              analysisViewMode === "list"
+                ? "bg-purple-600 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            List
+          </button>
+          <button
+            onClick={() => setAnalysisViewMode("graph")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+              analysisViewMode === "graph"
+                ? "bg-purple-600 text-white"
+                : "bg-white text-gray-700 hover:bg-gray-100"
+            }`}
+          >
+            Graph
+          </button>
+        </div>
+
+        {/* Graph View */}
+        {analysisViewMode === "graph" && analysisData.predictions && (
+          <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+            <h4 className="font-semibold text-gray-900 mb-4">3-Month Predictions Chart</h4>
+            {(() => {
+              const predictions = analysisData.predictions;
+              const months = predictions.months || [];
+              const costs = predictions.totalCost || [];
+              const revenues = predictions.totalRevenue || [];
+              const netBalance = predictions.netBalance || [];
+              
+              // Calculate predicted balances
+              const currentBalance = currentCard?.amount ?? 0;
+              const predictedBalances = months.map((_, i) => {
+                let balance = currentBalance;
+                for (let j = 0; j <= i; j++) {
+                  balance += netBalance[j] || 0;
+                }
+                return balance;
+              });
+              
+              // Find max value for scaling
+              const allValues = [...costs, ...revenues, ...predictedBalances.map(Math.abs)];
+              const maxValue = Math.max(...allValues, 100);
+              
+              const width = 500;
+              const height = 300;
+              const padding = 50;
+              const chartWidth = width - padding * 2;
+              const chartHeight = height - padding * 2;
+              
+              // Calculate points
+              const getX = (i) => padding + (i * chartWidth) / (months.length - 1 || 1);
+              const getY = (val) => padding + chartHeight - (val / maxValue) * chartHeight;
+              
+              // Create path for lines
+              const createPath = (values) => {
+                if (values.length === 0) return "";
+                return values.map((v, i) => {
+                  const x = getX(i);
+                  const y = getY(v);
+                  return i === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
+                }).join(" ");
+              };
+              
+              return (
+                <svg viewBox={`0 0 ${width} ${height}`} className="w-full max-w-lg mx-auto">
+                  {/* Grid lines */}
+                  {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => (
+                    <g key={i}>
+                      <line
+                        x1={padding}
+                        y1={padding + chartHeight * (1 - ratio)}
+                        x2={width - padding}
+                        y2={padding + chartHeight * (1 - ratio)}
+                        stroke="#e5e7eb"
+                        strokeDasharray="4"
+                      />
+                      <text
+                        x={padding - 5}
+                        y={padding + chartHeight * (1 - ratio) + 4}
+                        textAnchor="end"
+                        fontSize="10"
+                        fill="#6b7280"
+                      >
+                        {(maxValue * ratio).toFixed(0)}
+                      </text>
+                    </g>
+                  ))}
+                  
+                  {/* X-axis labels */}
+                  {months.map((month, i) => (
+                    <text
+                      key={i}
+                      x={getX(i)}
+                      y={height - 10}
+                      textAnchor="middle"
+                      fontSize="10"
+                      fill="#6b7280"
+                    >
+                      {month}
+                    </text>
+                  ))}
+                  
+                  {/* Cost line (red) */}
+                  <path
+                    d={createPath(costs)}
+                    fill="none"
+                    stroke="#dc2626"
+                    strokeWidth="2"
+                  />
+                  {costs.map((v, i) => (
+                    <circle key={`cost-${i}`} cx={getX(i)} cy={getY(v)} r="4" fill="#dc2626" />
+                  ))}
+                  
+                  {/* Revenue line (green) */}
+                  <path
+                    d={createPath(revenues)}
+                    fill="none"
+                    stroke="#16a34a"
+                    strokeWidth="2"
+                  />
+                  {revenues.map((v, i) => (
+                    <circle key={`rev-${i}`} cx={getX(i)} cy={getY(v)} r="4" fill="#16a34a" />
+                  ))}
+                  
+                  {/* Predicted Balance line (blue) */}
+                  <path
+                    d={createPath(predictedBalances.map(v => Math.max(0, v)))}
+                    fill="none"
+                    stroke="#2563eb"
+                    strokeWidth="2"
+                    strokeDasharray="5,5"
+                  />
+                  {predictedBalances.map((v, i) => (
+                    <circle key={`bal-${i}`} cx={getX(i)} cy={getY(Math.max(0, v))} r="4" fill="#2563eb" />
+                  ))}
+                </svg>
+              );
+            })()}
+            
+            {/* Legend */}
+            <div className="flex justify-center gap-6 mt-4 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-0.5 bg-red-600"></div>
+                <span className="text-gray-600">Cost</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-0.5 bg-green-600"></div>
+                <span className="text-gray-600">Revenue</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-0.5 bg-blue-600 border-dashed"></div>
+                <span className="text-gray-600">Predicted Balance</span>
+              </div>
+            </div>
+            
+            {/* Values Table */}
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left py-2 text-gray-600">Month</th>
+                    <th className="text-right py-2 text-red-600">Cost</th>
+                    <th className="text-right py-2 text-green-600">Revenue</th>
+                    <th className="text-right py-2 text-blue-600">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analysisData.predictions.months?.map((month, i) => {
+                    const currentBalance = currentCard?.amount ?? 0;
+                    let predictedBalance = currentBalance;
+                    for (let j = 0; j <= i; j++) {
+                      predictedBalance += analysisData.predictions.netBalance?.[j] || 0;
+                    }
+                    return (
+                      <tr key={i} className="border-b border-gray-100">
+                        <td className="py-2 font-medium">{month}</td>
+                        <td className="text-right text-red-600">{analysisData.predictions.totalCost?.[i]?.toFixed(0) || 0} ₼</td>
+                        <td className="text-right text-green-600">{analysisData.predictions.totalRevenue?.[i]?.toFixed(0) || 0} ₼</td>
+                        <td className={`text-right font-semibold ${predictedBalance >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                          {predictedBalance.toFixed(0)} ₼
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* List View - Summary Section */}
+        {analysisViewMode === "list" && analysisData.summary && (
           <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
             <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" strokeWidth="2">
@@ -1253,7 +1450,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
         )}
 
         {/* Predictions Section */}
-        {analysisData.predictions && (
+        {analysisViewMode === "list" && analysisData.predictions && (
           <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
             <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" strokeWidth="2">
@@ -1262,32 +1459,53 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
               3-Month Predictions
             </h4>
             
-            {/* Monthly Totals */}
+            {/* Monthly Totals with Predicted Balance */}
             {analysisData.predictions.months && (
               <div className="mb-4">
                 <div className="grid grid-cols-3 gap-2 text-center text-sm">
-                  {analysisData.predictions.months.map((month, i) => (
-                    <div key={i} className="bg-gray-50 p-3 rounded-lg">
-                      <p className="text-gray-600 font-medium mb-2">{month}</p>
-                      {analysisData.predictions.totalCost && (
-                        <p className="text-red-600 text-xs">
-                          Cost: {analysisData.predictions.totalCost[i]?.toFixed(0) || '0'} ₼
-                        </p>
-                      )}
-                      {analysisData.predictions.totalRevenue && (
-                        <p className="text-green-600 text-xs">
-                          Revenue: {analysisData.predictions.totalRevenue[i]?.toFixed(0) || '0'} ₼
-                        </p>
-                      )}
-                      {analysisData.predictions.netBalance && (
-                        <p className={`font-semibold text-xs mt-1 ${
-                          analysisData.predictions.netBalance[i] >= 0 ? 'text-green-700' : 'text-red-700'
-                        }`}>
-                          Net: {analysisData.predictions.netBalance[i]?.toFixed(0) || '0'} ₼
-                        </p>
-                      )}
-                    </div>
-                  ))}
+                  {analysisData.predictions.months.map((month, i) => {
+                    // Calculate predicted balance: current balance + cumulative net
+                    const currentBalance = currentCard?.amount ?? 0;
+                    let predictedBalance = currentBalance;
+                    for (let j = 0; j <= i; j++) {
+                      predictedBalance += analysisData.predictions.netBalance?.[j] || 0;
+                    }
+                    
+                    return (
+                      <div key={i} className="bg-gray-50 p-3 rounded-lg">
+                        <p className="text-gray-600 font-medium mb-2">{month}</p>
+                        {analysisData.predictions.totalCost && (
+                          <p className="text-red-600 text-xs">
+                            Cost: {analysisData.predictions.totalCost[i]?.toFixed(0) || '0'} ₼
+                          </p>
+                        )}
+                        {analysisData.predictions.totalRevenue && (
+                          <p className="text-green-600 text-xs">
+                            Revenue: {analysisData.predictions.totalRevenue[i]?.toFixed(0) || '0'} ₼
+                          </p>
+                        )}
+                        {analysisData.predictions.netBalance && (
+                          <p className={`text-xs mt-1 ${
+                            analysisData.predictions.netBalance[i] >= 0 ? 'text-green-700' : 'text-red-700'
+                          }`}>
+                            Net: {analysisData.predictions.netBalance[i]?.toFixed(0) || '0'} ₼
+                          </p>
+                        )}
+                        {/* Predicted Balance */}
+                        <div className="border-t border-gray-200 mt-2 pt-2">
+                          <p className={`font-bold text-sm ${
+                            predictedBalance >= 0 ? 'text-blue-600' : 'text-red-600'
+                          }`}>
+                            Balance: {predictedBalance.toFixed(0)} ₼
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Current Balance Reference */}
+                <div className="mt-3 text-center text-xs text-gray-500">
+                  Current Balance: {(currentCard?.amount ?? 0).toFixed(2)} ₼
                 </div>
               </div>
             )}
@@ -1332,7 +1550,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
         )}
 
         {/* Insights Section */}
-        {analysisData.insights && analysisData.insights.length > 0 && (
+        {analysisViewMode === "list" && analysisData.insights && analysisData.insights.length > 0 && (
           <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
             <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" strokeWidth="2">
@@ -1353,7 +1571,7 @@ export default function TransactionList({ transactions, onDeleteTransaction, cur
         )}
 
         {/* Category Breakdown */}
-        {analysisData.categoryBreakdown && Object.keys(analysisData.categoryBreakdown).length > 0 && (
+        {analysisViewMode === "list" && analysisData.categoryBreakdown && Object.keys(analysisData.categoryBreakdown).length > 0 && (
           <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
             <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9333ea" strokeWidth="2">

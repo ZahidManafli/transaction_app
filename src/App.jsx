@@ -24,6 +24,7 @@ import {
   doc,
   deleteDoc,
 } from "firebase/firestore";
+import { exportToExcel, parseExcelFile, validateImportData, downloadTemplate } from "./services/excelService";
 
 export default function App() {
   const [cards, setCards] = useState([]);
@@ -35,6 +36,10 @@ export default function App() {
   const [showLimitModal, setShowLimitModal] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [showWishModal, setShowWishModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importData, setImportData] = useState(null);
+  const [importValidation, setImportValidation] = useState(null);
+  const [importLoading, setImportLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
 
   // Helper function to check if transaction is scheduled (future date)
@@ -414,12 +419,59 @@ export default function App() {
       <div className="w-full max-w-7xl mx-auto px-4 md:px-6 py-3">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-lg font-semibold text-gray-900">Birbank Cashback</h1>
-          <button
-            onClick={() => signOut(auth)}
-            className="px-3 py-1 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 cursor-pointer"
-          >
-            Sign out
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Export Button */}
+            <button
+              onClick={() => {
+                // Load all transactions for all cards for export
+                const loadAllTransactionsAndExport = async () => {
+                  try {
+                    const txRef = collection(db, "transactions");
+                    const cardIds = cards.map(c => c.id);
+                    let allTransactions = [];
+                    
+                    for (const cardId of cardIds) {
+                      const q = query(txRef, where("cardId", "==", cardId));
+                      const snapshot = await getDocs(q);
+                      const txs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                      allTransactions = [...allTransactions, ...txs];
+                    }
+                    
+                    exportToExcel(cards, allTransactions);
+                  } catch (err) {
+                    console.error("Export failed", err);
+                    alert("Failed to export data. Please try again.");
+                  }
+                };
+                loadAllTransactionsAndExport();
+              }}
+              disabled={cards.length === 0}
+              className="px-3 py-1 text-sm rounded-lg bg-green-100 hover:bg-green-200 text-green-800 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+              </svg>
+              Export
+            </button>
+            
+            {/* Import Button */}
+            <button
+              onClick={() => setShowImportModal(true)}
+              className="px-3 py-1 text-sm rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-800 cursor-pointer flex items-center gap-1"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+              </svg>
+              Import
+            </button>
+            
+            <button
+              onClick={() => signOut(auth)}
+              className="px-3 py-1 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 cursor-pointer"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
@@ -532,6 +584,313 @@ export default function App() {
             setCards(prev => prev.map(c => (c.id === updatedCard.id ? updatedCard : c)));
           }}
         />
+      )}
+
+      {/* Import Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Import from Excel</h2>
+              <button
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportData(null);
+                  setImportValidation(null);
+                }}
+                className="text-gray-500 hover:text-gray-700 cursor-pointer"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+            
+            <div className="p-4 overflow-y-auto flex-1">
+              {!importData ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-gray-600">
+                    Upload an Excel file (.xlsx) containing your financial data. The file should have sheets named: Cards, Transactions, Limits, Plans, Wishes.
+                  </p>
+                  
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        
+                        try {
+                          setImportLoading(true);
+                          const data = await parseExcelFile(file);
+                          setImportData(data);
+                          const validation = validateImportData(data, cards);
+                          setImportValidation(validation);
+                        } catch (err) {
+                          alert(`Failed to parse file: ${err.message}`);
+                        } finally {
+                          setImportLoading(false);
+                        }
+                      }}
+                      className="hidden"
+                      id="excel-file-input"
+                    />
+                    <label
+                      htmlFor="excel-file-input"
+                      className="cursor-pointer"
+                    >
+                      <div className="flex flex-col items-center gap-2">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5">
+                          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                        </svg>
+                        <span className="text-sm font-medium text-gray-700">Click to select file</span>
+                        <span className="text-xs text-gray-500">or drag and drop</span>
+                      </div>
+                    </label>
+                    {importLoading && (
+                      <div className="mt-4 text-sm text-blue-600">Processing file...</div>
+                    )}
+                  </div>
+                  
+                  <button
+                    onClick={() => downloadTemplate()}
+                    className="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors cursor-pointer"
+                  >
+                    Download Template
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Validation Summary */}
+                  <div className={`p-3 rounded-lg ${
+                    importValidation?.isValid 
+                      ? 'bg-green-50 border border-green-200' 
+                      : 'bg-red-50 border border-red-200'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-2">
+                      {importValidation?.isValid ? (
+                        <>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2">
+                            <path d="M20 6L9 17l-5-5"/>
+                          </svg>
+                          <span className="font-medium text-green-800">Data is valid</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M15 9l-6 6M9 9l6 6"/>
+                          </svg>
+                          <span className="font-medium text-red-800">Validation errors found</span>
+                        </>
+                      )}
+                    </div>
+                    
+                    {importValidation?.errors?.length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-sm font-medium text-red-700 mb-1">Errors:</p>
+                        <ul className="text-xs text-red-600 list-disc pl-4">
+                          {importValidation.errors.slice(0, 5).map((err, i) => (
+                            <li key={i}>{err}</li>
+                          ))}
+                          {importValidation.errors.length > 5 && (
+                            <li>...and {importValidation.errors.length - 5} more</li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                    
+                    {importValidation?.warnings?.length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-sm font-medium text-yellow-700 mb-1">Warnings:</p>
+                        <ul className="text-xs text-yellow-600 list-disc pl-4">
+                          {importValidation.warnings.slice(0, 3).map((warn, i) => (
+                            <li key={i}>{warn}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Summary */}
+                  <div className="bg-gray-50 p-3 rounded-lg">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Import Summary:</p>
+                    <div className="grid grid-cols-5 gap-2 text-center text-xs">
+                      <div className="bg-white p-2 rounded">
+                        <p className="font-semibold text-lg text-blue-600">{importValidation?.summary?.cards || 0}</p>
+                        <p className="text-gray-500">Cards</p>
+                      </div>
+                      <div className="bg-white p-2 rounded">
+                        <p className="font-semibold text-lg text-purple-600">{importValidation?.summary?.transactions || 0}</p>
+                        <p className="text-gray-500">Transactions</p>
+                      </div>
+                      <div className="bg-white p-2 rounded">
+                        <p className="font-semibold text-lg text-red-600">{importValidation?.summary?.limits || 0}</p>
+                        <p className="text-gray-500">Limits</p>
+                      </div>
+                      <div className="bg-white p-2 rounded">
+                        <p className="font-semibold text-lg text-green-600">{importValidation?.summary?.plans || 0}</p>
+                        <p className="text-gray-500">Plans</p>
+                      </div>
+                      <div className="bg-white p-2 rounded">
+                        <p className="font-semibold text-lg text-yellow-600">{importValidation?.summary?.wishes || 0}</p>
+                        <p className="text-gray-500">Wishes</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={() => {
+                      setImportData(null);
+                      setImportValidation(null);
+                    }}
+                    className="text-sm text-blue-600 hover:text-blue-800 cursor-pointer"
+                  >
+                    ← Select different file
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 border-t flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportData(null);
+                  setImportValidation(null);
+                }}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!importData || !importValidation?.isValid) return;
+                  
+                  try {
+                    setImportLoading(true);
+                    const userId = localStorage.getItem("userId");
+                    if (!userId) {
+                      alert("Please sign in to import data.");
+                      return;
+                    }
+                    
+                    // Create a map of card_number to card for linking
+                    const cardNumberToCard = {};
+                    cards.forEach(c => {
+                      cardNumberToCard[c.cardNumber] = c;
+                    });
+                    
+                    // Import new cards first
+                    for (const cardData of importData.cards) {
+                      // Check if card already exists
+                      if (cardNumberToCard[cardData.card_number]) {
+                        continue; // Skip existing cards
+                      }
+                      
+                      const fsCard = {
+                        card_number: cardData.card_number,
+                        current_amount: cardData.current_amount,
+                        user_id: userId,
+                      };
+                      const result = await addCardToTable(fsCard);
+                      if (!result.error) {
+                        const newCard = {
+                          id: result.id,
+                          cardNumber: cardData.card_number,
+                          amount: cardData.current_amount,
+                          limits: [],
+                          plans: [],
+                          wishes: [],
+                        };
+                        cardNumberToCard[cardData.card_number] = newCard;
+                        setCards(prev => [...prev, newCard]);
+                      }
+                    }
+                    
+                    // Import transactions
+                    for (const txData of importData.transactions) {
+                      const card = cardNumberToCard[txData.card_number];
+                      if (!card) continue;
+                      
+                      const txDate = new Date(txData.date);
+                      const now = new Date();
+                      const isFuture = txDate > now;
+                      
+                      const tx = {
+                        cardId: card.id,
+                        title: txData.title,
+                        type: txData.type,
+                        category: txData.category,
+                        amount: txData.amount,
+                        date: txData.date,
+                        scheduled: txData.scheduled || isFuture,
+                        isAffect: txData.isAffect || !isFuture,
+                        includeInExpected: txData.includeInExpected,
+                      };
+                      
+                      const result = await addTransactionToTable(tx);
+                      if (!result.error) {
+                        // Update card balance if transaction affects it
+                        if (tx.isAffect) {
+                          const updatedAmount = tx.type === "cost" 
+                            ? card.amount - tx.amount 
+                            : card.amount + tx.amount;
+                          await updateDoc(doc(db, "cards", card.id), { current_amount: updatedAmount });
+                          card.amount = updatedAmount;
+                          setCards(prev => prev.map(c => c.id === card.id ? { ...c, amount: updatedAmount } : c));
+                        }
+                      }
+                    }
+                    
+                    // Import limits, plans, wishes
+                    for (const type of ['limits', 'plans', 'wishes']) {
+                      for (const item of importData[type]) {
+                        const card = cardNumberToCard[item.card_number];
+                        if (!card) continue;
+                        
+                        // Add to card's array
+                        const currentArray = card[type] || [];
+                        // Check if already exists for this month
+                        if (!currentArray.some(existing => existing.month === item.month)) {
+                          const newArray = [...currentArray, { month: item.month, amount: item.amount }];
+                          await updateDoc(doc(db, "cards", card.id), { [type]: newArray });
+                          card[type] = newArray;
+                          setCards(prev => prev.map(c => c.id === card.id ? { ...c, [type]: newArray } : c));
+                        }
+                      }
+                    }
+                    
+                    alert("Import completed successfully!");
+                    setShowImportModal(false);
+                    setImportData(null);
+                    setImportValidation(null);
+                    
+                    // Reload transactions for current card
+                    if (selectedCardId) {
+                      const txRef = collection(db, "transactions");
+                      const q = query(txRef, where("cardId", "==", selectedCardId), orderBy("date", "desc"));
+                      const snapshot = await getDocs(q);
+                      const fetched = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+                      setTransactions(fetched);
+                    }
+                    
+                  } catch (err) {
+                    console.error("Import failed", err);
+                    alert(`Import failed: ${err.message}`);
+                  } finally {
+                    setImportLoading(false);
+                  }
+                }}
+                disabled={!importData || !importValidation?.isValid || importLoading}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {importLoading ? 'Importing...' : 'Import Data'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
